@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>至聖修復室｜線上預約</title>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <style>
+        /* 您原本的質感設計 */
+        :root { --bg-color: #F4F1EA; --card-bg: #FCFAF7; --text-main: #4A403A; --text-sub: #8C7B75; --accent: #7E8C69; --border: #DCD3B2; --input-bg: #FFFFFF; --disabled: #E0E0E0; }
+        body { background-color: var(--bg-color); color: var(--text-main); font-family: sans-serif; margin: 0; padding: 20px; }
+        .container { max-width: 480px; margin: 40px auto; padding: 40px; background: var(--card-bg); border-radius: 12px; border: 1px solid var(--border); }
+        h1 { text-align: center; color: var(--text-main); margin-bottom: 5px; }
+        .form-group { margin-bottom: 25px; }
+        label { display: block; margin-bottom: 8px; font-weight: bold; }
+        select, input { width: 100%; padding: 14px; border: 1px solid var(--border); border-radius: 6px; box-sizing: border-box; background: #fff; }
+        .gender-group { display: flex; gap: 15px; }
+        .gender-btn { flex: 1; padding: 14px; border: 1px solid var(--border); text-align: center; cursor: pointer; border-radius: 6px; }
+        .gender-btn.active { background-color: var(--accent); color: white; }
+        button.submit-btn { width: 100%; padding: 18px; background-color: var(--text-main); color: white; border: none; border-radius: 6px; cursor: pointer; margin-top: 20px; font-size: 16px; }
+        button:disabled { background: #ccc; }
+        #loading { text-align: center; display: none; margin-top: 20px; color: var(--accent); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>至聖修復室</h1>
+        <hr style="border:0; height:1px; background:var(--accent); margin:20px 0;">
+        
+        <div class="form-group"><label>1. 選擇服務師傅</label><select id="master" onchange="onMasterChange()"><option value="">載入中...</option></select></div>
+        <div class="form-group"><label>2. 選擇服務項目</label><select id="service" disabled><option value="">請先選擇師傅</option></select></div>
+        <div class="form-group"><label>3. 選擇日期</label><input type="date" id="datePicker" onchange="onDateChange()" disabled></div>
+        <div class="form-group"><label>4. 選擇時段</label><select id="timeSlot" disabled><option value="">請先選擇日期</option></select></div>
+        
+        <div class="form-group"><label>5. 姓名</label><input type="text" id="name"></div>
+        <div class="form-group"><label>6. 電話</label><input type="tel" id="phone"></div>
+        <div class="form-group"><label>7. 性別</label>
+            <div class="gender-group">
+                <div class="gender-btn" onclick="selectGender('男', this)">男</div>
+                <div class="gender-btn" onclick="selectGender('女', this)">女</div>
+            </div>
+        </div>
+
+        <button id="submitBtn" class="submit-btn" onclick="submitBooking()">確認預約</button>
+        <div id="loading">處理中...</div>
+    </div>
+
+    <script>
+        // 👇👇👇 這裡填入您 Apps Script 的網址 (請確認結尾是 /exec) 👇👇👇
+        const API_URL = "https://script.google.com/macros/s/AKfycbxJiZo7EHGyMpn3TtuwmrTriSGF8XwkYnkHT2Cc2cVCut70dEiAa9AUFCVpHvIpD2CT/exec";
+        
+        // ⚠️ 這裡先留空，等一下申請到新 LIFF ID 再填回來
+        const MY_LIFF_ID = "LIFF_ID_PLACEHOLDER"; 
+
+        let allSchedules = [];
+        let globalSettings = { masters: [], services: [] };
+        let selectedGender = "";
+        let lineUserId = "";
+
+        window.onload = async () => {
+            // 初始化 LIFF (如果有 ID 才跑)
+            if (MY_LIFF_ID !== "LIFF_ID_PLACEHOLDER") {
+                try {
+                    await liff.init({ liffId: MY_LIFF_ID });
+                    if (!liff.isLoggedIn()) liff.login();
+                    else lineUserId = (await liff.getProfile()).userId;
+                } catch(e) { console.error(e); }
+            }
+
+            // 抓取設定
+            try {
+                const res = await fetch(API_URL + "?action=getSettings");
+                globalSettings = await res.json();
+                const mSel = document.getElementById('master');
+                mSel.innerHTML = '<option value="">請選擇師傅</option>';
+                globalSettings.masters.forEach(m => mSel.innerHTML += `<option value="${m}">${m}</option>`);
+                
+                const schRes = await fetch(API_URL + "?action=getSchedule");
+                allSchedules = await schRes.json();
+            } catch(e) { alert("連線 Google 失敗，請確認 API 網址"); }
+        };
+
+        function onMasterChange() {
+            const m = document.getElementById('master').value;
+            const sSel = document.getElementById('service');
+            sSel.innerHTML = '<option value="">請選擇服務項目</option>';
+            sSel.disabled = true;
+            if (m) {
+                const servs = globalSettings.services.filter(s => s.master === m);
+                if (servs.length) {
+                    servs.forEach(s => sSel.innerHTML += `<option value="${s.name}">${s.name} - $${s.price}</option>`);
+                    sSel.disabled = false;
+                }
+            }
+        }
+        
+        document.getElementById('service').addEventListener('change', (e) => document.getElementById('datePicker').disabled = !e.target.value);
+
+        function onDateChange() {
+            const m = document.getElementById('master').value;
+            const d = document.getElementById('datePicker').value;
+            const tSel = document.getElementById('timeSlot');
+            tSel.innerHTML = '<option value="">搜尋中...</option>';
+            const slots = allSchedules.filter(s => s.master === m && s.date === d);
+            tSel.innerHTML = '<option value="">請選擇時段</option>';
+            if (!slots.length) { tSel.innerHTML = '<option>本日已滿</option>'; tSel.disabled = true; return; }
+            tSel.disabled = false;
+            slots.sort((a,b)=>a.time.localeCompare(b.time));
+            slots.forEach(s => tSel.innerHTML += `<option value="${s.date}|${s.time}">${s.time}</option>`);
+        }
+
+        function selectGender(g, el) { selectedGender = g; document.querySelectorAll('.gender-btn').forEach(b=>b.classList.remove('active')); el.classList.add('active'); }
+
+        async function submitBooking() {
+            const n=document.getElementById('name').value;
+            const p=document.getElementById('phone').value;
+            const m=document.getElementById('master').value;
+            const s=document.getElementById('service').value;
+            const tv=document.getElementById('timeSlot').value;
+            
+            if(!n||!p||!m||!s||!tv||!selectedGender) return alert("請填寫完整");
+            
+            // 暫時拿掉 LIFF ID 檢查，讓您先測試表單
+            // if(!lineUserId) return alert("請用 LINE 開啟");
+
+            document.getElementById('submitBtn').disabled = true;
+            document.getElementById('loading').style.display = 'block';
+            
+            const [d, t] = tv.split('|');
+            
+            // 🔥 關鍵修正：改用標準 POST，移除 no-cors
+            try {
+                const res = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify({ name:n, phone:p, gender:selectedGender, master:m, service:s, date:d, time:t, userId: lineUserId })
+                });
+                const text = await res.text();
+                if(text.includes("Success")) {
+                    alert("✅ 預約成功！");
+                    if(liff.isInClient()) liff.closeWindow();
+                    else location.reload();
+                } else {
+                    alert("失敗：" + text);
+                }
+            } catch(e) {
+                alert("連線錯誤：" + e);
+            }
+            document.getElementById('submitBtn').disabled = false;
+            document.getElementById('loading').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
